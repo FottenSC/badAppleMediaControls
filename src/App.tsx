@@ -14,8 +14,9 @@ const App: React.FC = () => {
   const fps = 30;
 
   // Modern Silent Sound (MP3) for iOS Audio Context Unlock
+  // 1-second silent MP3 for iOS Audio Context Unlock
   const SILENT_SOUND =
-    "data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGFtZTMuMTAwA/+8AAAAAAAAAAAAA";
+    "data:audio/mpeg;base64,SUQzBAAAAAABEVRYWFhYAAAASAAAAbGF2ZWY0Mi40OS4xMDBAQCBAAAAAAAAD//7EZAAMAAAABAAfAAAgAAAABAAfAAAgA//7EZAAMAAAABAAfAAAgAAAABAAfAAAgA//7EZAAMAAAABAAfAAAgAAAABAAfAAAgA";
 
   const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) ||
     (navigator.userAgent.includes("Mac") && navigator.maxTouchPoints > 1);
@@ -66,6 +67,35 @@ const App: React.FC = () => {
         artist: "Alstroemeria Records",
         album: "Traditional Remix",
         artwork: [{ src: firstFrame, sizes: "480x360", type: "image/jpeg" }],
+      });
+
+      // Set action handlers early for iOS
+      navigator.mediaSession.setActionHandler("play", () => {
+        videoRef.current?.play();
+      });
+      navigator.mediaSession.setActionHandler("pause", () => {
+        videoRef.current?.pause();
+      });
+      navigator.mediaSession.setActionHandler("seekbackward", (details) => {
+        if (videoRef.current) {
+          videoRef.current.currentTime = Math.max(
+            videoRef.current.currentTime - (details.seekOffset || 10),
+            0,
+          );
+        }
+      });
+      navigator.mediaSession.setActionHandler("seekforward", (details) => {
+        if (videoRef.current) {
+          videoRef.current.currentTime = Math.min(
+            videoRef.current.currentTime + (details.seekOffset || 10),
+            videoRef.current.duration,
+          );
+        }
+      });
+      navigator.mediaSession.setActionHandler("seekto", (details) => {
+        if (videoRef.current && details.seekTime !== undefined) {
+          videoRef.current.currentTime = details.seekTime;
+        }
       });
     }
 
@@ -171,18 +201,10 @@ const App: React.FC = () => {
       video.muted = true;
       video.play().then(() => {
         setIsPlaying(true);
-        video.muted = false;
-
-        if ("mediaSession" in navigator) {
-          navigator.mediaSession.setActionHandler(
-            "play",
-            () => videoRef.current?.play(),
-          );
-          navigator.mediaSession.setActionHandler(
-            "pause",
-            () => videoRef.current?.pause(),
-          );
-        }
+        // On iOS, we need a small delay before unmuting sometimes
+        setTimeout(() => {
+          if (videoRef.current) videoRef.current.muted = false;
+        }, 100);
       }).catch((err) => {
         video.muted = true;
         video.play().then(() => {
@@ -202,11 +224,13 @@ const App: React.FC = () => {
         id="bg-video"
         loop
         playsInline
+        webkit-playsinline="true"
         muted
+        autoPlay
         preload="auto"
-      >
-        <source src="/assets/badapple.mp4" type="video/mp4" />
-      </video>
+        src="/assets/badapple.mp4"
+        crossOrigin="anonymous"
+      />
 
       <div className="glass-panel">
         <h1>Bad Apple!!</h1>
