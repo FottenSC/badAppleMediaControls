@@ -116,7 +116,6 @@ h1 {
     background: var(--primary);
     border-radius: 3px;
     width: 0%;
-    transition: width 0.1s linear;
 }
 
 /* .progress-thumb {
