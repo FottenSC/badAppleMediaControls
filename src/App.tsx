@@ -64,7 +64,7 @@ const App: React.FC = () => {
         title: "Bad Apple!!",
         artist: "Alstroemeria Records",
         album: "Traditional Remix",
-        artwork: [{ src: firstFrame, sizes: "512x512", type: "image/jpeg" }],
+        artwork: [{ src: firstFrame, sizes: "480x360", type: "image/jpeg" }],
       });
     }
 
@@ -104,8 +104,10 @@ const App: React.FC = () => {
       }
 
       // 3. Metadata updates
-      // Reverting to 1s on mobile for absolute safety
-      const metaThrottle = isMobile ? 1000 : (1000 / fps);
+      const isWindows = /Win/i.test(navigator.userAgent);
+      const targetFps = isWindows ? 15 : fps; // Lower FPS on Windows to prevent SMTC flashing
+      const metaThrottle = isMobile ? 1000 : (1000 / targetFps);
+
       if (time - lastMetadataUpdateRef.current >= metaThrottle) {
         const currentFrame = Math.floor(video.currentTime * fps) + 1;
         const paddedFrame = String(currentFrame).padStart(4, "0");
@@ -120,7 +122,7 @@ const App: React.FC = () => {
               album: "Traditional Remix",
               artwork: [{
                 src: artworkUrl,
-                sizes: "512x512",
+                sizes: "480x360",
                 type: "image/jpeg",
               }],
             });
