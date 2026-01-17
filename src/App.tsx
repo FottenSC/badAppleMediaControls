@@ -2,9 +2,11 @@ import React, { useEffect, useRef, useState } from "react";
 
 const App: React.FC = () => {
   const [isPlaying, setIsPlaying] = useState(false);
-  const [progress, setProgress] = useState(0);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const progressRef = useRef<HTMLDivElement>(null);
   const requestRef = useRef<number>();
+  const lastMetadataUpdateRef = useRef<number>(0);
+  const preloadedFrames = useRef<Set<string>>(new Set());
   const fps = 30;
 
   // Sync isPlaying state with video events
@@ -24,17 +26,36 @@ const App: React.FC = () => {
     };
   }, []);
 
-  const lastMetadataUpdateRef = useRef<number>(0);
+  // Preload function to keep frames in browser cache
+  const preloadFrames = (startFrame: number, count: number) => {
+    for (let i = 1; i <= count; i++) {
+      const frameNum = startFrame + i;
+      const padded = String(frameNum).padStart(4, "0");
+      const url = `/assets/frames/output_${padded}.jpg`;
+
+      if (!preloadedFrames.current.has(url)) {
+        const img = new Image();
+        img.src = url;
+        preloadedFrames.current.add(url);
+
+        // Keep set size manageable
+        if (preloadedFrames.current.size > 100) {
+          const first = preloadedFrames.current.values().next().value;
+          if (first) preloadedFrames.current.delete(first);
+        }
+      }
+    }
+  };
 
   // Main update loop for SMTC artwork and UI progress
   const updateLoop = (time: number) => {
     const video = videoRef.current;
     if (!video) return;
 
-    // Update UI Progress every frame for smoothness
-    if (video.duration) {
+    // Update UI Progress every frame for smoothness (Direct DOM update)
+    if (video.duration && progressRef.current) {
       const p = (video.currentTime / video.duration) * 100;
-      setProgress(p);
+      progressRef.current.style.width = `${p}%`;
     }
 
     // Update SMTC (Throttled to fps)
@@ -47,6 +68,9 @@ const App: React.FC = () => {
       const currentFrame = Math.floor(currentTime * fps) + 1;
       const paddedFrame = String(currentFrame).padStart(4, "0");
       const artworkUrl = `/assets/frames/output_${paddedFrame}.jpg`;
+
+      // Preload the next few frames to avoid flickering
+      preloadFrames(currentFrame, 5);
 
       // Update Artwork
       navigator.mediaSession.metadata = new MediaMetadata({
@@ -82,13 +106,15 @@ const App: React.FC = () => {
     if (!video) return;
 
     if (isPlaying) {
-      video.play().catch(console.error);
       requestRef.current = requestAnimationFrame(updateLoop);
     } else {
-      video.pause();
       if (requestRef.current) {
         cancelAnimationFrame(requestRef.current);
       }
+    }
+
+    if ("mediaSession" in navigator) {
+      navigator.mediaSession.playbackState = isPlaying ? "playing" : "paused";
     }
 
     return () => {
@@ -100,11 +126,18 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if ("mediaSession" in navigator) {
-      navigator.mediaSession.setActionHandler("play", () => setIsPlaying(true));
-      navigator.mediaSession.setActionHandler(
-        "pause",
-        () => setIsPlaying(false),
-      );
+      navigator.mediaSession.setActionHandler("play", async () => {
+        if (videoRef.current) {
+          try {
+            await videoRef.current.play();
+          } catch (e) {
+            console.error("SMTC Play failed:", e);
+          }
+        }
+      });
+      navigator.mediaSession.setActionHandler("pause", () => {
+        if (videoRef.current) videoRef.current.pause();
+      });
       navigator.mediaSession.setActionHandler("seekbackward", (details) => {
         if (videoRef.current) {
           videoRef.current.currentTime -= details.seekOffset || 10;
@@ -123,11 +156,18 @@ const App: React.FC = () => {
     }
   }, []);
 
-  const togglePlay = () => {
-    if (isPlaying) {
-      setIsPlaying(false);
-    } else {
-      setIsPlaying(true);
+  const togglePlay = async () => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    try {
+      if (isPlaying) {
+        video.pause();
+      } else {
+        await video.play();
+      }
+    } catch (err) {
+      console.error("Toggle play failed:", err);
     }
   };
 
@@ -149,6 +189,7 @@ const App: React.FC = () => {
         src="/assets/badapple.mp4"
         loop
         playsInline
+        preload="auto"
       />
 
       <div className="glass-panel">
@@ -194,7 +235,11 @@ const App: React.FC = () => {
         </div>
 
         <div className="progress-container" onClick={handleProgressBarClick}>
-          <div className="progress-bar" style={{ width: `${progress}%` }} />
+          <div
+            ref={progressRef}
+            className="progress-bar"
+            style={{ width: "0%" }}
+          />
         </div>
       </div>
     </div>
