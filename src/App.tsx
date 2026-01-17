@@ -234,7 +234,7 @@ const App: React.FC = () => {
         muted
         preload="metadata"
       >
-        <source src="/assets/badapple.mp4" type="video/mp4" />
+        <source src="/assets/badapple.mp4?v=2" type="video/mp4" />
       </video>
 
       <div className="glass-panel">
