@@ -6,7 +6,9 @@ const App: React.FC = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const progressRef = useRef<HTMLDivElement>(null);
   const requestRef = useRef<number>();
-  const lastUpdateRef = useRef<number>(0);
+  const lastPositionUpdateRef = useRef<number>(0);
+  const lastMetadataUpdateRef = useRef<number>(0);
+  const lastArtworkUrlRef = useRef<string>("");
   const preloadedFrames = useRef<Set<string>>(new Set());
   const unlocked = useRef(false);
   const fps = 30;
@@ -19,44 +21,51 @@ const App: React.FC = () => {
     (typeof navigator.platform === "string" &&
       navigator.platform.includes("Mac") && navigator.maxTouchPoints > 1);
 
+  const preloadFrame = (frameNum: number) => {
+    if (frameNum > 6571) return;
+    const padded = String(frameNum).padStart(4, "0");
+    const url = `${window.location.origin}/assets/frames/output_${padded}.jpg`;
+
+    if (preloadedFrames.current.has(url)) return;
+
+    const img = new Image();
+    img.src = url;
+    preloadedFrames.current.add(url);
+
+    // Manage cache size
+    if (preloadedFrames.current.size > (isMobile ? 30 : 150)) {
+      const firstKey = preloadedFrames.current.values().next().value;
+      if (firstKey) preloadedFrames.current.delete(firstKey);
+    }
+  };
+
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
 
-    // Prime the media engine
     video.load();
 
     const onPlay = () => setIsPlaying(true);
     const onPause = () => setIsPlaying(false);
     const onError = () => {
       const err = video.error;
-      if (err) {
-        setError(
-          `Playback Error: ${
-            err.message || err.code
-          }. Check if video exists at /assets/badapple.mp4`,
-        );
-      }
+      if (err) setError(`Playback Error: ${err.message || err.code}`);
     };
 
     video.addEventListener("play", onPlay);
     video.addEventListener("pause", onPause);
     video.addEventListener("error", onError);
 
-    // Initial Metadata Hint
-    if (isMobile && "mediaSession" in navigator) {
-      try {
-        navigator.mediaSession.metadata = new MediaMetadata({
-          title: "Bad Apple!!",
-          artist: "Alstroemeria Records",
-          album: "Traditional Remix",
-          artwork: [{
-            src: `${window.location.origin}/assets/frames/output_0001.jpg`,
-            sizes: "480x360",
-            type: "image/jpeg",
-          }],
-        });
-      } catch (e) {}
+    // Initial SMTC setup
+    if ("mediaSession" in navigator) {
+      const firstFrame =
+        `${window.location.origin}/assets/frames/output_0001.jpg`;
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: "Bad Apple!!",
+        artist: "Alstroemeria Records",
+        album: "Traditional Remix",
+        artwork: [{ src: firstFrame, sizes: "512x512", type: "image/jpeg" }],
+      });
     }
 
     return () => {
@@ -65,40 +74,6 @@ const App: React.FC = () => {
       video.removeEventListener("error", onError);
     };
   }, []);
-
-  const setupMediaSession = () => {
-    if (!("mediaSession" in navigator)) return;
-
-    try {
-      navigator.mediaSession.metadata = new MediaMetadata({
-        title: "Bad Apple!!",
-        artist: "Alstroemeria Records",
-        album: "Traditional Remix",
-        artwork: [{
-          src: `${window.location.origin}/assets/frames/output_0001.jpg`,
-          sizes: "480x360",
-          type: "image/jpeg",
-        }],
-      });
-
-      // Handlers
-      navigator.mediaSession.setActionHandler(
-        "play",
-        () => videoRef.current?.play().catch(() => {}),
-      );
-      navigator.mediaSession.setActionHandler(
-        "pause",
-        () => videoRef.current?.pause(),
-      );
-      navigator.mediaSession.setActionHandler("seekto", (details) => {
-        if (videoRef.current && details.seekTime !== undefined) {
-          videoRef.current.currentTime = details.seekTime;
-        }
-      });
-    } catch (e) {
-      console.warn("MediaSession setup failed", e);
-    }
-  };
 
   const updateLoop = (time: number) => {
     const video = videoRef.current;
@@ -110,44 +85,52 @@ const App: React.FC = () => {
     }
 
     if ("mediaSession" in navigator) {
-      // Heavily throttle position updates on mobile to prevent SMTC flickering/crashing
-      const shouldUpdatePosition = !isMobile ||
-        (time - lastUpdateRef.current >= 2000);
-
-      if (
-        shouldUpdatePosition && "setPositionState" in navigator.mediaSession &&
-        video.duration && isFinite(video.duration)
-      ) {
-        try {
-          if (isMobile) lastUpdateRef.current = time;
-          navigator.mediaSession.setPositionState({
-            duration: video.duration,
-            playbackRate: video.playbackRate,
-            position: Math.max(0, Math.min(video.currentTime, video.duration)),
-          });
-        } catch (e) {}
+      // 2. Position updates (2s mobile throttle)
+      const posThrottle = isMobile ? 2000 : 1000;
+      if (time - lastPositionUpdateRef.current >= posThrottle) {
+        if (video.duration && isFinite(video.duration)) {
+          try {
+            navigator.mediaSession.setPositionState({
+              duration: video.duration,
+              playbackRate: video.playbackRate,
+              position: Math.max(
+                0,
+                Math.min(video.currentTime, video.duration),
+              ),
+            });
+            lastPositionUpdateRef.current = time;
+          } catch (e) {}
+        }
       }
 
-      // 30FPS Metadata updates ONLY on desktop. Crashes iPhone Safari.
-      if (!isMobile && time - lastUpdateRef.current >= 1000 / fps) {
-        lastUpdateRef.current = time;
+      // 3. Metadata updates
+      // Reverting to 1s on mobile for absolute safety
+      const metaThrottle = isMobile ? 1000 : (1000 / fps);
+      if (time - lastMetadataUpdateRef.current >= metaThrottle) {
         const currentFrame = Math.floor(video.currentTime * fps) + 1;
         const paddedFrame = String(currentFrame).padStart(4, "0");
         const artworkUrl =
           `${window.location.origin}/assets/frames/output_${paddedFrame}.jpg`;
 
-        try {
-          navigator.mediaSession.metadata = new MediaMetadata({
-            title: "Bad Apple!!",
-            artist: "Alstroemeria Records",
-            album: "Traditional Remix",
-            artwork: [{
-              src: artworkUrl,
-              sizes: "480x360",
-              type: "image/jpeg",
-            }],
-          });
-        } catch (e) {}
+        if (artworkUrl !== lastArtworkUrlRef.current) {
+          try {
+            navigator.mediaSession.metadata = new MediaMetadata({
+              title: "Bad Apple!!",
+              artist: "Alstroemeria Records",
+              album: "Traditional Remix",
+              artwork: [{
+                src: artworkUrl,
+                sizes: "512x512",
+                type: "image/jpeg",
+              }],
+            });
+            lastMetadataUpdateRef.current = time;
+            lastArtworkUrlRef.current = artworkUrl;
+
+            // Simple preload next logical frame
+            preloadFrame(currentFrame + (isMobile ? 30 : 1));
+          } catch (e) {}
+        }
       }
     }
 
@@ -174,7 +157,6 @@ const App: React.FC = () => {
 
     setError(null);
 
-    // iOS Audio Context Unlock
     if (!unlocked.current) {
       try {
         const audio = new Audio(SILENT_SOUND);
@@ -184,39 +166,30 @@ const App: React.FC = () => {
     }
 
     if (video.paused) {
-      // iOS Start Strategy: Muted -> Play -> Success -> Unmute
       video.muted = true;
-      const playPromise = video.play();
+      video.play().then(() => {
+        setIsPlaying(true);
+        video.muted = false;
 
-      if (playPromise !== undefined) {
-        playPromise.then(() => {
+        if ("mediaSession" in navigator) {
+          navigator.mediaSession.setActionHandler(
+            "play",
+            () => videoRef.current?.play(),
+          );
+          navigator.mediaSession.setActionHandler(
+            "pause",
+            () => videoRef.current?.pause(),
+          );
+        }
+      }).catch((err) => {
+        video.muted = true;
+        video.play().then(() => {
           setIsPlaying(true);
-          video.muted = false;
-          setupMediaSession();
-        }).catch((err) => {
-          console.error("Play failed", err);
-          // Fallback to purely muted
-          video.muted = true;
-          video.play().then(() => {
-            setIsPlaying(true);
-            setError("Playing muted (iOS limitation)");
-            setupMediaSession();
-          }).catch((e2) => {
-            setError(`Playback failed: ${e2.message}`);
-          });
-        });
-      }
+          setError("Playing muted (iOS limitation)");
+        }).catch((e2) => setError(`Error: ${e2.message}`));
+      });
     } else {
       video.pause();
-    }
-  };
-
-  const handleProgressBarClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    if (videoRef.current?.duration) {
-      videoRef.current.currentTime = (x / rect.width) *
-        videoRef.current.duration;
     }
   };
 
@@ -236,7 +209,6 @@ const App: React.FC = () => {
       <div className="glass-panel">
         <h1>Bad Apple!!</h1>
         <div className="subtitle">Media Controls Visualizer</div>
-
         {error && <div className="debug-error">{error}</div>}
 
         <div className="controls">
@@ -245,7 +217,6 @@ const App: React.FC = () => {
               <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z" />
             </svg>
           </button>
-
           <button className="btn btn-play" onClick={togglePlay}>
             {isPlaying
               ? (
@@ -269,7 +240,6 @@ const App: React.FC = () => {
                 </svg>
               )}
           </button>
-
           <button className="btn btn-disabled">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
               <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
@@ -277,7 +247,17 @@ const App: React.FC = () => {
           </button>
         </div>
 
-        <div className="progress-container" onClick={handleProgressBarClick}>
+        <div
+          className="progress-container"
+          onClick={(e) => {
+            const rect = e.currentTarget.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            if (videoRef.current?.duration) {
+              videoRef.current.currentTime = (x / rect.width) *
+                videoRef.current.duration;
+            }
+          }}
+        >
           <div
             ref={progressRef}
             className="progress-bar"
