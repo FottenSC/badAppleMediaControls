@@ -51,7 +51,14 @@ const App: React.FC = () => {
     const onPause = () => setIsPlaying(false);
     const onError = () => {
       const err = video.error;
-      if (err) setError(`Playback Error: ${err.message || err.code}`);
+      if (err) {
+        let msg = "Unknown Error";
+        if (err.code === 1) msg = "Aborted";
+        if (err.code === 2) msg = "Network Error";
+        if (err.code === 3) msg = "Decode Error";
+        if (err.code === 4) msg = "Source Not Supported / Not Found";
+        setError(`Playback Error ${err.code}: ${msg} (${video.src})`);
+      }
     };
 
     video.addEventListener("play", onPlay);
@@ -224,13 +231,11 @@ const App: React.FC = () => {
         id="bg-video"
         loop
         playsInline
-        webkit-playsinline="true"
         muted
-        autoPlay
-        preload="auto"
-        src="/assets/badapple.mp4"
-        crossOrigin="anonymous"
-      />
+        preload="metadata"
+      >
+        <source src="/assets/badapple.mp4" type="video/mp4" />
+      </video>
 
       <div className="glass-panel">
         <h1>Bad Apple!!</h1>

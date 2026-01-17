@@ -5,3 +5,5 @@
 # Cache the video heavily
 /assets/badapple.mp4
   Cache-Control: public, max-age=31536000
+  Access-Control-Allow-Origin: *
+  Content-Type: video/mp4
