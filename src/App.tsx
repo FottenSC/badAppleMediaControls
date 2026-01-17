@@ -9,10 +9,10 @@ const App: React.FC = () => {
   const preloadedFrames = useRef<Set<string>>(new Set());
   const fps = 30;
 
-  // iOS/Mobile detection to disable heavy effects
-  const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+  // Improved Mobile detection
+  const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 
-  // Sync isPlaying state with video events
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -23,28 +23,33 @@ const App: React.FC = () => {
     video.addEventListener("play", onPlay);
     video.addEventListener("pause", onPause);
 
-    // Initial interaction sync for iOS
-    const handleFirstInteraction = () => {
-      if (video.paused) video.load();
-      document.removeEventListener("touchstart", handleFirstInteraction);
-      document.removeEventListener("mousedown", handleFirstInteraction);
-    };
-    document.addEventListener("touchstart", handleFirstInteraction);
-    document.addEventListener("mousedown", handleFirstInteraction);
+    // Set stable metadata for mobile immediately
+    if (isMobile && "mediaSession" in navigator) {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: "Bad Apple!!",
+        artist: "Alstroemeria Records",
+        album: "Traditional Remix",
+        artwork: [
+          {
+            src: `${window.location.origin}/assets/frames/output_0001.jpg`,
+            sizes: "480x360",
+            type: "image/jpeg",
+          },
+        ],
+      });
+    }
 
     return () => {
       video.removeEventListener("play", onPlay);
       video.removeEventListener("pause", onPause);
-      document.removeEventListener("touchstart", handleFirstInteraction);
-      document.removeEventListener("mousedown", handleFirstInteraction);
     };
   }, []);
 
-  // Preload function to keep frames in browser cache
   const preloadFrames = (startFrame: number, count: number) => {
     if (isMobile) return;
     for (let i = 1; i <= count; i++) {
       const frameNum = startFrame + i;
+      if (frameNum > 6571) break;
       const padded = String(frameNum).padStart(4, "0");
       const url = `/assets/frames/output_${padded}.jpg`;
 
@@ -52,60 +57,54 @@ const App: React.FC = () => {
         const img = new Image();
         img.src = url;
         preloadedFrames.current.add(url);
-
-        if (preloadedFrames.current.size > 100) {
-          const first = preloadedFrames.current.values().next().value;
+        if (preloadedFrames.current.size > 50) {
+          const iterator = preloadedFrames.current.values();
+          const first = iterator.next().value;
           if (first) preloadedFrames.current.delete(first);
         }
       }
     }
   };
 
-  // Main update loop for SMTC artwork and UI progress
   const updateLoop = (time: number) => {
     const video = videoRef.current;
     if (!video) return;
 
-    // Update UI Progress every frame for smoothness (Direct DOM update)
     if (video.duration && progressRef.current) {
       const p = (video.currentTime / video.duration) * 100;
       progressRef.current.style.width = `${p}%`;
     }
 
-    // Update SMTC (Throttled to fps, heavily throttled on mobile)
     if ("mediaSession" in navigator) {
-      const timeSinceLastUpdate = time - lastMetadataUpdateRef.current;
-      const updateInterval = isMobile ? 5000 : (1000 / fps);
-
-      if (timeSinceLastUpdate >= updateInterval) {
-        lastMetadataUpdateRef.current = time;
+      if (
+        "setPositionState" in navigator.mediaSession && video.duration &&
+        !isNaN(video.duration)
+      ) {
         try {
-          const currentTime = video.currentTime;
-          const currentFrame = Math.floor(currentTime * fps) + 1;
-          const paddedFrame = String(currentFrame).padStart(4, "0");
-          const artworkUrl = `/assets/frames/output_${paddedFrame}.jpg`;
-
-          if (!isMobile) preloadFrames(currentFrame, 5);
-
-          navigator.mediaSession.metadata = new MediaMetadata({
-            title: "Bad Apple!!",
-            artist: "Alstroemeria Records",
-            album: "Traditional Remix",
-            artwork: [
-              { src: artworkUrl, sizes: "480x360", type: "image/jpeg" },
-            ],
+          navigator.mediaSession.setPositionState({
+            duration: video.duration,
+            playbackRate: video.playbackRate,
+            position: video.currentTime,
           });
+        } catch (e) { /* ignore */ }
+      }
 
-          if ("setPositionState" in navigator.mediaSession && video.duration) {
-            navigator.mediaSession.setPositionState({
-              duration: video.duration,
-              playbackRate: video.playbackRate,
-              position: video.currentTime,
-            });
-          }
-        } catch (e) {
-          console.error("MediaSession update failed:", e);
-        }
+      // NO high-frequency metadata updates on mobile. It crashes iOS Safari.
+      if (!isMobile && time - lastMetadataUpdateRef.current >= 1000 / fps) {
+        lastMetadataUpdateRef.current = time;
+        const currentFrame = Math.floor(video.currentTime * fps) + 1;
+        const paddedFrame = String(currentFrame).padStart(4, "0");
+        const artworkUrl =
+          `${window.location.origin}/assets/frames/output_${paddedFrame}.jpg`;
+
+        preloadFrames(currentFrame, 5);
+
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title: "Bad Apple!!",
+          artist: "Alstroemeria Records",
+          album: "Traditional Remix",
+          artwork: [{ src: artworkUrl, sizes: "480x360", type: "image/jpeg" }],
+        });
       }
     }
 
@@ -115,15 +114,10 @@ const App: React.FC = () => {
   };
 
   useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return;
-
     if (isPlaying) {
       requestRef.current = requestAnimationFrame(updateLoop);
     } else {
-      if (requestRef.current) {
-        cancelAnimationFrame(requestRef.current);
-      }
+      if (requestRef.current) cancelAnimationFrame(requestRef.current);
     }
 
     if ("mediaSession" in navigator) {
@@ -131,25 +125,24 @@ const App: React.FC = () => {
     }
 
     return () => {
-      if (requestRef.current) {
-        cancelAnimationFrame(requestRef.current);
-      }
+      if (requestRef.current) cancelAnimationFrame(requestRef.current);
     };
   }, [isPlaying]);
 
   useEffect(() => {
     if ("mediaSession" in navigator) {
-      navigator.mediaSession.setActionHandler("play", async () => {
-        if (videoRef.current) {
-          try {
-            await videoRef.current.play();
-          } catch (e) {
-            console.error("SMTC Play failed:", e);
-          }
+      navigator.mediaSession.setActionHandler(
+        "play",
+        () => videoRef.current?.play().catch(() => {}),
+      );
+      navigator.mediaSession.setActionHandler(
+        "pause",
+        () => videoRef.current?.pause(),
+      );
+      navigator.mediaSession.setActionHandler("seekto", (details) => {
+        if (videoRef.current && details.seekTime !== undefined) {
+          videoRef.current.currentTime = details.seekTime;
         }
-      });
-      navigator.mediaSession.setActionHandler("pause", () => {
-        if (videoRef.current) videoRef.current.pause();
       });
       navigator.mediaSession.setActionHandler("seekbackward", (details) => {
         if (videoRef.current) {
@@ -161,11 +154,6 @@ const App: React.FC = () => {
           videoRef.current.currentTime += details.seekOffset || 10;
         }
       });
-      navigator.mediaSession.setActionHandler("seekto", (details) => {
-        if (videoRef.current && details.seekTime !== undefined) {
-          videoRef.current.currentTime = details.seekTime;
-        }
-      });
     }
   }, []);
 
@@ -173,30 +161,27 @@ const App: React.FC = () => {
     const video = videoRef.current;
     if (!video) return;
 
-    try {
-      if (!video.paused) {
-        video.pause();
-      } else {
+    if (video.paused) {
+      try {
         video.muted = false;
         await video.play();
-      }
-    } catch (err) {
-      console.error("Toggle play failed:", err);
-      try {
+      } catch (err) {
+        console.warn("Unmuted play failed, fallback to muted", err);
         video.muted = true;
-        await video.play();
-      } catch (mutedErr) {
-        console.error("Muted playback failed too:", mutedErr);
+        await video.play().catch((e) =>
+          console.error("Total playback failure", e)
+        );
       }
+    } else {
+      video.pause();
     }
   };
 
   const handleProgressBarClick = (e: React.MouseEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
-    const clickedProgress = x / rect.width;
-    if (videoRef.current && videoRef.current.duration) {
-      videoRef.current.currentTime = clickedProgress *
+    if (videoRef.current?.duration) {
+      videoRef.current.currentTime = (x / rect.width) *
         videoRef.current.duration;
     }
   };
@@ -210,6 +195,7 @@ const App: React.FC = () => {
         loop
         playsInline
         preload="auto"
+        crossOrigin="anonymous"
       />
 
       <div className="glass-panel">
