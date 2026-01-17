@@ -18,8 +18,8 @@ const App: React.FC = () => {
     "data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGFtZTMuMTAwA/+8AAAAAAAAAAAAA";
 
   const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) ||
-    (typeof navigator.platform === "string" &&
-      navigator.platform.includes("Mac") && navigator.maxTouchPoints > 1);
+    (navigator.userAgent.includes("Mac") && navigator.maxTouchPoints > 1);
+  const isAndroid = /Android/i.test(navigator.userAgent);
 
   const preloadFrame = (frameNum: number) => {
     if (frameNum > 6571) return;
@@ -32,8 +32,9 @@ const App: React.FC = () => {
     img.src = url;
     preloadedFrames.current.add(url);
 
-    // Manage cache size
-    if (preloadedFrames.current.size > (isMobile ? 30 : 150)) {
+    // Manage cache size (higher on desktop/android)
+    const maxCache = (isMobile && !isAndroid) ? 30 : 150;
+    if (preloadedFrames.current.size > maxCache) {
       const firstKey = preloadedFrames.current.values().next().value;
       if (firstKey) preloadedFrames.current.delete(firstKey);
     }
@@ -86,7 +87,7 @@ const App: React.FC = () => {
 
     if ("mediaSession" in navigator) {
       // 2. Position updates (2s mobile throttle)
-      const posThrottle = isMobile ? 2000 : 1000;
+      const posThrottle = (isMobile && !isAndroid) ? 2000 : 1000;
       if (time - lastPositionUpdateRef.current >= posThrottle) {
         if (video.duration && isFinite(video.duration)) {
           try {
@@ -104,9 +105,8 @@ const App: React.FC = () => {
       }
 
       // 3. Metadata updates
-      const isWindows = /Win/i.test(navigator.userAgent);
-      const targetFps = isWindows ? 15 : fps; // Lower FPS on Windows to prevent SMTC flashing
-      const metaThrottle = isMobile ? 1000 : (1000 / targetFps);
+      const targetFps = isAndroid ? 30 : fps;
+      const metaThrottle = (isMobile && !isAndroid) ? 1000 : (1000 / targetFps);
 
       if (time - lastMetadataUpdateRef.current >= metaThrottle) {
         const currentFrame = Math.floor(video.currentTime * fps) + 1;
@@ -130,7 +130,7 @@ const App: React.FC = () => {
             lastArtworkUrlRef.current = artworkUrl;
 
             // Simple preload next logical frame
-            preloadFrame(currentFrame + (isMobile ? 30 : 1));
+            preloadFrame(currentFrame + (isMobile && !isAndroid ? 30 : 1));
           } catch (e) {}
         }
       }
