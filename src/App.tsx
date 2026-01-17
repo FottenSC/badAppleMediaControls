@@ -9,6 +9,9 @@ const App: React.FC = () => {
   const preloadedFrames = useRef<Set<string>>(new Set());
   const fps = 30;
 
+  // iOS/Mobile detection to disable heavy effects
+  const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+
   // Sync isPlaying state with video events
   useEffect(() => {
     const video = videoRef.current;
@@ -20,14 +23,26 @@ const App: React.FC = () => {
     video.addEventListener("play", onPlay);
     video.addEventListener("pause", onPause);
 
+    // Initial interaction sync for iOS
+    const handleFirstInteraction = () => {
+      if (video.paused) video.load();
+      document.removeEventListener("touchstart", handleFirstInteraction);
+      document.removeEventListener("mousedown", handleFirstInteraction);
+    };
+    document.addEventListener("touchstart", handleFirstInteraction);
+    document.addEventListener("mousedown", handleFirstInteraction);
+
     return () => {
       video.removeEventListener("play", onPlay);
       video.removeEventListener("pause", onPause);
+      document.removeEventListener("touchstart", handleFirstInteraction);
+      document.removeEventListener("mousedown", handleFirstInteraction);
     };
   }, []);
 
   // Preload function to keep frames in browser cache
   const preloadFrames = (startFrame: number, count: number) => {
+    if (isMobile) return;
     for (let i = 1; i <= count; i++) {
       const frameNum = startFrame + i;
       const padded = String(frameNum).padStart(4, "0");
@@ -38,7 +53,6 @@ const App: React.FC = () => {
         img.src = url;
         preloadedFrames.current.add(url);
 
-        // Keep set size manageable
         if (preloadedFrames.current.size > 100) {
           const first = preloadedFrames.current.values().next().value;
           if (first) preloadedFrames.current.delete(first);
@@ -58,40 +72,39 @@ const App: React.FC = () => {
       progressRef.current.style.width = `${p}%`;
     }
 
-    // Update SMTC (Throttled to fps)
-    if (
-      "mediaSession" in navigator &&
-      time - lastMetadataUpdateRef.current >= 1000 / fps
-    ) {
-      lastMetadataUpdateRef.current = time;
-      const currentTime = video.currentTime;
-      const currentFrame = Math.floor(currentTime * fps) + 1;
-      const paddedFrame = String(currentFrame).padStart(4, "0");
-      const artworkUrl = `/assets/frames/output_${paddedFrame}.jpg`;
+    // Update SMTC (Throttled to fps, heavily throttled on mobile)
+    if ("mediaSession" in navigator) {
+      const timeSinceLastUpdate = time - lastMetadataUpdateRef.current;
+      const updateInterval = isMobile ? 5000 : (1000 / fps);
 
-      // Preload the next few frames to avoid flickering
-      preloadFrames(currentFrame, 5);
-
-      // Update Artwork
-      navigator.mediaSession.metadata = new MediaMetadata({
-        title: "Bad Apple!!",
-        artist: "Alstroemeria Records",
-        album: "Traditional Remix",
-        artwork: [
-          { src: artworkUrl, sizes: "480x360", type: "image/jpeg" },
-        ],
-      });
-
-      // Update Position State for OS sync
-      if ("setPositionState" in navigator.mediaSession && video.duration) {
+      if (timeSinceLastUpdate >= updateInterval) {
+        lastMetadataUpdateRef.current = time;
         try {
-          navigator.mediaSession.setPositionState({
-            duration: video.duration,
-            playbackRate: video.playbackRate,
-            position: video.currentTime,
+          const currentTime = video.currentTime;
+          const currentFrame = Math.floor(currentTime * fps) + 1;
+          const paddedFrame = String(currentFrame).padStart(4, "0");
+          const artworkUrl = `/assets/frames/output_${paddedFrame}.jpg`;
+
+          if (!isMobile) preloadFrames(currentFrame, 5);
+
+          navigator.mediaSession.metadata = new MediaMetadata({
+            title: "Bad Apple!!",
+            artist: "Alstroemeria Records",
+            album: "Traditional Remix",
+            artwork: [
+              { src: artworkUrl, sizes: "480x360", type: "image/jpeg" },
+            ],
           });
+
+          if ("setPositionState" in navigator.mediaSession && video.duration) {
+            navigator.mediaSession.setPositionState({
+              duration: video.duration,
+              playbackRate: video.playbackRate,
+              position: video.currentTime,
+            });
+          }
         } catch (e) {
-          // Ignore errors
+          console.error("MediaSession update failed:", e);
         }
       }
     }
@@ -161,13 +174,20 @@ const App: React.FC = () => {
     if (!video) return;
 
     try {
-      if (isPlaying) {
+      if (!video.paused) {
         video.pause();
       } else {
+        video.muted = false;
         await video.play();
       }
     } catch (err) {
       console.error("Toggle play failed:", err);
+      try {
+        video.muted = true;
+        await video.play();
+      } catch (mutedErr) {
+        console.error("Muted playback failed too:", mutedErr);
+      }
     }
   };
 
